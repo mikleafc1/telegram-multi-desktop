@@ -48,6 +48,21 @@
 └── README.md
 ```
 
+## 🧩 نسخهٔ ۶۴گرَم (64Gram) با اکانت نامحدود
+
+علاوه بر بیلد رسمی، ورک‌فلوی [`build-64gram.yml`](.github/workflows/build-64gram.yml) دقیقاً **64Gram v1.2.12** (همان نسخه‌ای که کاربران دارند) را با وصلهٔ [`patches/unlimited-accounts-64gram.patch`](patches/unlimited-accounts-64gram.patch) بیلد می‌کند:
+
+| ثابت | مقدار 64Gram | مقدار جدید |
+|---|---|---|
+| `kMaxAccounts` | `100` | `999` |
+| `kPremiumMaxAccounts` | `6` | `1000` |
+
+- دستور بیلد عیناً از CI خود 64Gram برداشته شده (toolset `14.44` برای پشتیبانی ویندوز ۷، SDK `10.0.26100`).
+- آپدیت خودکار غیرفعال است تا برنامه خودش را با نسخهٔ رسمی (محدود) جایگزین نکند.
+- خروجی: آرتیفکت `windows-exe-64gram` ← فایل زیپ `64Gram-unlimited-accounts-win64.zip`.
+- اجرا: تب **Actions** → ورک‌فلو `Build Windows (64Gram + unlimited accounts)` → **Run workflow**.
+- چون نسخه و فرمت دیتا یکسان است، برای آپدیت کافی است `Telegram.exe` جدید را جایگزین کنید؛ اکانت‌های قبلی سر جایشان می‌مانند.
+
 ## 🧩 جزئیات فنی بیلد
 
 - **رانر:** `windows-latest` (ویندوز سرور با Visual Studio و Windows SDK از پیش نصب)

@@ -1,0 +1,13 @@
+--- a/Telegram/SourceFiles/main/main_domain.h
++++ b/Telegram/SourceFiles/main/main_domain.h
+@@ -36,8 +36,8 @@
+ 		std::unique_ptr<Account> account;
+ 	};
+ 
+-	static constexpr auto kMaxAccounts = 100;
+-	static constexpr auto kPremiumMaxAccounts = 6;
++	static constexpr auto kMaxAccounts = 999;
++	static constexpr auto kPremiumMaxAccounts = 1000;
+ 
+ 	explicit Domain(const QString &dataName);
+ 	~Domain();
