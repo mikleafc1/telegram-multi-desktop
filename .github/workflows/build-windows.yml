@@ -1,0 +1,260 @@
+name: Build Windows (official tdesktop + unlimited accounts)
+
+# Builds the OFFICIAL Telegram Desktop (dev branch) with a single tiny patch
+# that lifts the 3-account limit to (practically) unlimited.
+# Recipe adapted from the proven 64Gram CI (TDesktop-x64/tdesktop, win.yml)
+# targeting upstream telegramdesktop/tdesktop instead of a fork.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-windows
+  cancel-in-progress: false
+
+env:
+  # Public credentials of the official Telegram Desktop client.
+  # Overridable via repository secrets TDESKTOP_API_ID / TDESKTOP_API_HASH.
+  TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID || '6' }}
+  TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH || 'eb06d4abfb49dc3eeb1aeb98ae0f581e' }}
+
+jobs:
+
+  # ---------------------------------------------------------------
+  # Job 1: prepare all third-party libraries for win64 (Debug+Release
+  # variants are both built by upstream prepare.py unless skip-release
+  # is passed; we need Release variants to link a Release Telegram.exe).
+  # Split into two prepare passes so that a cache of the "base" libs is
+  # persisted even if the long Qt build later hits the job timeout.
+  # ---------------------------------------------------------------
+  libraries:
+    name: Libraries (win64)
+    runs-on: windows-latest
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: cmd
+    steps:
+
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Clone official tdesktop (dev).
+        run: |
+          git -c core.autocrlf=false clone --depth 1 --filter=blob:none https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
+
+      - name: Compute cache key (prepare scripts hash + week number).
+        shell: bash
+        run: |
+          WEEK=$(date +%G-W%V)
+          CACHE_KEY=$(cat "$TBUILD/tdesktop/Telegram/build/prepare/prepare.py" \
+              "$TBUILD/tdesktop/Telegram/build/prepare/qt_version.py" \
+              "$TBUILD/tdesktop/Telegram/build/prepare/win.bat" \
+            | sha256sum | awk '{ print $1 }')
+          echo "WEEK=$WEEK" >> $GITHUB_ENV
+          echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
+
+      - name: Native Tools Command Prompt.
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Restore ThirdParty cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+          restore-keys: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+
+      - name: Restore Libraries cache (base, without Qt).
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+          key: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+          restore-keys: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+
+      # All win64 stages except xz/libiconv (mac-only) and the Qt trio
+      # (qt6_windows7, tg_angle, qt_6.11.2). Stage names verified against
+      # upstream dev; if upstream renames one, the fallback below runs a
+      # full prepare instead.
+      - name: Libraries (base stages).
+        run: |
+          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent patches msys64 python NuGet jom rust lzma zlib mozjpeg openssl3 opus rnnoise gas-preprocessor dav1d openh264 libavif libwebp libjxl libvpx liblcms2 nv-codec-headers regex ffmpeg libheif openal-soft breakpad crashpad tg_owt ada tde2e tlottie wallet-engine tdesktop_rust
+          if %errorlevel% neq 0 (
+            echo Base stage list failed, running full prepare instead...
+            call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
+          )
+
+      - name: Free up some disk space (base).
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save Libraries cache (base).
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+          key: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+
+      # Qt 6 build (the longest stage). Already-built stages skip
+      # internally via Libraries/win64/cache_keys.
+      - name: Libraries (Qt).
+        run: |
+          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
+
+      - name: Free up some disk space (Qt).
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save ThirdParty cache.
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+
+      - name: Save Libraries cache (Qt).
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+          key: win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+
+  # ---------------------------------------------------------------
+  # Job 2: clone upstream, apply the unlimited-accounts patch,
+  # configure and build Telegram.exe (Release x64), upload artifact.
+  # ---------------------------------------------------------------
+  build:
+    name: Build (Release x64)
+    needs: libraries
+    runs-on: windows-latest
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: cmd
+    steps:
+
+      - name: Checkout this repository (for the patch).
+        uses: actions/checkout@v7
+
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Clone official tdesktop (dev, recursive shallow submodules).
+        run: |
+          git -c core.autocrlf=false clone --depth 1 --shallow-submodules --recurse-submodules https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
+
+      - name: Apply unlimited-accounts patch.
+        run: |
+          git -C %TBUILD%\tdesktop apply --whitespace=nowarn %GITHUB_WORKSPACE%\patches\unlimited-accounts.patch || python -c "import io,re;p=r'%TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h';s=io.open(p,encoding='utf-8').read();s=re.sub(r'static constexpr auto kMaxAccounts = \d+;','static constexpr auto kMaxAccounts = 999;',s);s=re.sub(r'static constexpr auto kPremiumMaxAccounts = \d+;','static constexpr auto kPremiumMaxAccounts = 1000;',s);io.open(p,'w',encoding='utf-8',newline='').write(s)"
+
+      - name: Verify patch applied.
+        run: |
+          findstr /C:"kMaxAccounts = 999" %TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h || exit /b 1
+          findstr /C:"kPremiumMaxAccounts = 1000" %TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h || exit /b 1
+
+      - name: Compute cache key (prepare scripts hash + week number).
+        shell: bash
+        run: |
+          WEEK=$(date +%G-W%V)
+          CACHE_KEY=$(cat "$TBUILD/tdesktop/Telegram/build/prepare/prepare.py" \
+              "$TBUILD/tdesktop/Telegram/build/prepare/qt_version.py" \
+              "$TBUILD/tdesktop/Telegram/build/prepare/win.bat" \
+            | sha256sum | awk '{ print $1 }')
+          echo "WEEK=$WEEK" >> $GITHUB_ENV
+          echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
+
+      - name: Native Tools Command Prompt.
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Restore ThirdParty cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: win-tdesktop-thirdparty-not-used-${{ github.run_id }}
+          restore-keys: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+
+      - name: Restore Libraries cache (base, without Qt).
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+          key: win-tdesktop-libs-base-not-used-${{ github.run_id }}
+          restore-keys: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+
+      - name: Restore Libraries cache (Qt).
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+          key: win-tdesktop-libs-qt-not-used-${{ github.run_id }}
+          restore-keys: win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-
+
+      - name: Sync libraries (skips everything already cached).
+        run: |
+          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
+
+      - name: Telegram Desktop build (Release x64).
+        run: |
+          cd %TBUILD%\tdesktop\Telegram
+
+          call configure.bat x64 ^
+            -D TDESKTOP_API_ID=%TDESKTOP_API_ID% ^
+            -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH% ^
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+            -D CMAKE_CONFIGURATION_TYPES=Release
+
+          cmake --build ..\out --config Release --parallel
+
+      - name: Collect artifact.
+        run: |
+          set OUT=%TBUILD%\tdesktop\out\Release
+          mkdir %GITHUB_WORKSPACE%\artifact
+          move %OUT%\Telegram.exe %GITHUB_WORKSPACE%\artifact\
+          if exist %OUT%\Updater.exe move %OUT%\Updater.exe %GITHUB_WORKSPACE%\artifact\
+          powershell -NoProfile -Command "Compress-Archive -Path '%GITHUB_WORKSPACE%\artifact\*' -DestinationPath '%GITHUB_WORKSPACE%\Telegram-unlimited-accounts-win64.zip' -Force"
+
+      - uses: actions/upload-artifact@v7
+        name: Upload artifact.
+        with:
+          name: windows-exe
+          path: ${{ github.workspace }}\Telegram-unlimited-accounts-win64.zip
+          retention-days: 14
+          if-no-files-found: error
