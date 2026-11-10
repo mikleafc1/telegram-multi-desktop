@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           WEEK=$(date +%G-W%V)
-          CACHE_KEY=$(find "$TBUILD/tdesktop/Telegram/build/prepare" -maxdepth 1 \( -name '*.py' -o -name 'win.bat' \) -type f | sort | xargs cat | sha256sum | awk '{ print $1 }')
+          CACHE_KEY=$(find "$GITHUB_WORKSPACE/TBuild/tdesktop/Telegram/build/prepare" -maxdepth 1 \( -name '*.py' -o -name 'win.bat' \) -type f | sort | xargs cat | sha256sum | awk '{ print $1 }')
           echo "WEEK=$WEEK" >> $GITHUB_ENV
           echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
 
@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           WEEK=$(date +%G-W%V)
-          CACHE_KEY=$(find "$TBUILD/tdesktop/Telegram/build/prepare" -maxdepth 1 \( -name '*.py' -o -name 'win.bat' \) -type f | sort | xargs cat | sha256sum | awk '{ print $1 }')
+          CACHE_KEY=$(find "$GITHUB_WORKSPACE/TBuild/tdesktop/Telegram/build/prepare" -maxdepth 1 \( -name '*.py' -o -name 'win.bat' \) -type f | sort | xargs cat | sha256sum | awk '{ print $1 }')
           echo "WEEK=$WEEK" >> $GITHUB_ENV
           echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
 
