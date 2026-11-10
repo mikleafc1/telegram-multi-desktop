@@ -50,6 +50,20 @@ jobs:
         run: |
           git -c core.autocrlf=false clone --depth 1 --filter=blob:none --recurse-submodules --shallow-submodules https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
 
+      # breakpad is only linked on macOS (dump_syms tool). On windows-latest the
+      # runner ships VS 2026 WITHOUT the ATL component, so the breakpad stage
+      # always fails with C1083: 'atlbase.h' not found. Renaming the stage makes
+      # prepare.py skip it entirely; the Windows build links crashpad instead.
+      - name: Skip breakpad stage (macOS-only, ATL missing on runner).
+        shell: pwsh
+        run: |
+          $p = "$env:TBUILD\tdesktop\Telegram\build\prepare\prepare.py"
+          $s = [IO.File]::ReadAllText($p)
+          $s = $s.Replace("stage('breakpad'", "stage('breakpad_win_skip'")
+          [IO.File]::WriteAllText($p, $s)
+          if ($s -notmatch 'breakpad_win_skip') { Write-Host 'ERROR: patch failed'; exit 1 }
+          Write-Host 'breakpad stage disabled.'
+
       - name: Compute cache key (prepare scripts hash + week number).
         shell: bash
         run: |
@@ -90,13 +104,13 @@ jobs:
           key: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
           restore-keys: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
 
-      # All win64 stages except xz/libiconv (mac-only) and the Qt trio
-      # (qt6_windows7, tg_angle, qt_6.11.2). Stage names verified against
-      # upstream dev; if upstream renames one, the fallback below runs a
-      # full prepare instead.
+      # All win64 stages except xz/libiconv (mac-only), breakpad (mac-only,
+      # skipped above) and the Qt trio (qt6_windows7, tg_angle, qt_*).
+      # Stage names verified against upstream dev; if upstream renames one, the
+      # fallback below runs a full prepare instead (breakpad stays skipped).
       - name: Libraries (base stages).
         run: |
-          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent patches msys64 python NuGet jom rust lzma zlib mozjpeg openssl3 opus rnnoise gas-preprocessor dav1d openh264 libavif libwebp libjxl libvpx liblcms2 nv-codec-headers regex ffmpeg libheif openal-soft breakpad crashpad tg_owt ada tde2e tlottie wallet-engine tdesktop_rust
+          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent patches msys64 python NuGet jom rust lzma zlib mozjpeg openssl3 opus rnnoise gas-preprocessor dav1d openh264 libavif libwebp libjxl libvpx liblcms2 nv-codec-headers regex ffmpeg libheif openal-soft crashpad tg_owt ada tde2e tlottie wallet-engine tdesktop_rust
           if %errorlevel% neq 0 (
             echo Base stage list failed, running full prepare instead...
             call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
@@ -168,6 +182,17 @@ jobs:
       - name: Clone official tdesktop (dev, recursive shallow submodules).
         run: |
           git -c core.autocrlf=false clone --depth 1 --shallow-submodules --recurse-submodules https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
+
+      # Same breakpad skip as the libraries job (see comment there).
+      - name: Skip breakpad stage (macOS-only, ATL missing on runner).
+        shell: pwsh
+        run: |
+          $p = "$env:TBUILD\tdesktop\Telegram\build\prepare\prepare.py"
+          $s = [IO.File]::ReadAllText($p)
+          $s = $s.Replace("stage('breakpad'", "stage('breakpad_win_skip'")
+          [IO.File]::WriteAllText($p, $s)
+          if ($s -notmatch 'breakpad_win_skip') { Write-Host 'ERROR: patch failed'; exit 1 }
+          Write-Host 'breakpad stage disabled.'
 
       - name: Apply unlimited-accounts patch.
         run: |
