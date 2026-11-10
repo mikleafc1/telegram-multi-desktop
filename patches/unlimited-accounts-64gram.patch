@@ -11,3 +11,36 @@
  
  	explicit Domain(const QString &dataName);
  	~Domain();
+--- a/Telegram/SourceFiles/main/main_domain.cpp
++++ b/Telegram/SourceFiles/main/main_domain.cpp
+@@ -619,7 +619,7 @@
+ 	//			|| d.account->session().isTestMode());
+ 	//});
+ 	//return std::min(int(premiumCount) + kMaxAccounts, kPremiumMaxAccounts);
+-	return 100;
++	return 999;
+ }
+ 
+ rpl::producer<int> Domain::maxAccountsChanges() const {
+--- a/Telegram/SourceFiles/settings/sections/settings_information.cpp
++++ b/Telegram/SourceFiles/settings/sections/settings_information.cpp
+@@ -1040,7 +1040,7 @@
+ 				found = true;
+ 			}
+ 		}
+-		if (!found && domain.accounts().size() >= 10) {
++		if (!found && domain.accounts().size() >= 999) {
+ 			_controller->show(
+ 				Box(AccountsLimitBox, &_controller->session()));
+ 		} else if (newWindow) {
+--- a/Telegram/SourceFiles/boxes/premium_limits_box.cpp
++++ b/Telegram/SourceFiles/boxes/premium_limits_box.cpp
+@@ -1067,7 +1067,7 @@
+ void AccountsLimitBox(
+ 		not_null<Ui::GenericBox*> box,
+ 		not_null<Main::Session*> session) {
+-	const auto defaultLimit = 10;
++	const auto defaultLimit = 999;
+ 	const auto premiumLimit = Main::Domain::kPremiumMaxAccounts;
+ 
+ 	using Args = Ui::Premium::AccountsRowArgs;

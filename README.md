@@ -50,12 +50,21 @@
 
 ## 🧩 نسخهٔ ۶۴گرَم (64Gram) با اکانت نامحدود
 
-علاوه بر بیلد رسمی، ورک‌فلوی [`build-64gram.yml`](.github/workflows/build-64gram.yml) دقیقاً **64Gram v1.2.12** (همان نسخه‌ای که کاربران دارند) را با وصلهٔ [`patches/unlimited-accounts-64gram.patch`](patches/unlimited-accounts-64gram.patch) بیلد می‌کند:
+علاوه بر بیلد رسمی، ورک‌فلوی [`build-64gram.yml`](.github/workflows/build-64gram.yml) دقیقاً **64Gram v1.2.12** (همان نسخه‌ای که کاربران دارند) را با وصلهٔ [`patches/unlimited-accounts-64gram.patch`](patches/unlimited-accounts-64gram.patch) بیلد می‌کند.
 
-| ثابت | مقدار 64Gram | مقدار جدید |
+⚠️ نکتهٔ مهم: در 64Gram v1.2.12 محدودیت اکانت **در چهار نقطه** وجود دارد و پچ باید هر چهار را تغییر دهد (اگر فقط هدر عوض شود، عملاً همان محدودیت قبلی می‌ماند):
+
+| فایل | کد اصلی | مقدار جدید |
 |---|---|---|
-| `kMaxAccounts` | `100` | `999` |
-| `kPremiumMaxAccounts` | `6` | `1000` |
+| `main/main_domain.h` | `kMaxAccounts = 100` | `999` |
+| `main/main_domain.h` | `kPremiumMaxAccounts = 6` | `1000` |
+| `main/main_domain.cpp` | `Domain::maxAccounts()` ← `return 100;` | `return 999;` |
+| `settings/sections/settings_information.cpp` | هندلر «Add account» ← `size() >= 10` | `>= 999` |
+| `boxes/premium_limits_box.cpp` | `defaultLimit = 10` (نمایش کادر محدودیت) | `999` |
+
+> `settings_information.cpp` همان نقطه‌ای است که کاربر را عملاً روی **۱۰ اکانت** قفل می‌کرد؛ ثابت‌های هدر در این نسخه فقط در `Expects` و خواندن tdata استفاده می‌شوند.
+
+اگر `git apply` به هر دلیلی شکست بخورد، اسکریپت [`patches/fallback-patch-64gram.py`](patches/fallback-patch-64gram.py) هر چهار نقطه را با regex اصلاح می‌کند و مرحلهٔ «Verify patch applied» وجود هر پنج تغییر را بررسی می‌کند تا بیلدِ ناقص هرگز به‌عنوان «نامحدود» منتشر نشود.
 
 - دستور بیلد عیناً از CI خود 64Gram برداشته شده (toolset `14.44` برای پشتیبانی ویندوز ۷، SDK `10.0.26100`).
 - آپدیت خودکار غیرفعال است تا برنامه خودش را با نسخهٔ رسمی (محدود) جایگزین نکند.

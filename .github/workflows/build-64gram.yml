@@ -195,12 +195,15 @@ jobs:
 
       - name: Apply unlimited-accounts patch.
         run: |
-          git -C %TBUILD%\tdesktop apply --whitespace=nowarn %GITHUB_WORKSPACE%\patches\unlimited-accounts-64gram.patch || python -c "import io,re;p=r'%TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h';s=io.open(p,encoding='utf-8').read();s=re.sub(r'static constexpr auto kMaxAccounts = \d+;','static constexpr auto kMaxAccounts = 999;',s);s=re.sub(r'static constexpr auto kPremiumMaxAccounts = \d+;','static constexpr auto kPremiumMaxAccounts = 1000;',s);io.open(p,'w',encoding='utf-8',newline='').write(s)"
+          git -C %TBUILD%\tdesktop apply --whitespace=nowarn %GITHUB_WORKSPACE%\patches\unlimited-accounts-64gram.patch || python %GITHUB_WORKSPACE%\patches\fallback-patch-64gram.py %TBUILD%\tdesktop
 
-      - name: Verify patch applied.
+      - name: Verify patch applied (all 4 limit points).
         run: |
           findstr /C:"kMaxAccounts = 999" %TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h || exit /b 1
           findstr /C:"kPremiumMaxAccounts = 1000" %TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h || exit /b 1
+          findstr /C:"return 999;" %TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.cpp || exit /b 1
+          findstr /C:"size() >= 999" %TBUILD%\tdesktop\Telegram\SourceFiles\settings\sections\settings_information.cpp || exit /b 1
+          findstr /C:"defaultLimit = 999" %TBUILD%\tdesktop\Telegram\SourceFiles\boxes\premium_limits_box.cpp || exit /b 1
 
       - name: Compute cache key (prepare scripts hash + week number).
         shell: bash
