@@ -48,7 +48,7 @@ jobs:
 
       - name: Clone official tdesktop (dev).
         run: |
-          git -c core.autocrlf=false clone --depth 1 --filter=blob:none https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
+          git -c core.autocrlf=false clone --depth 1 --filter=blob:none --recurse-submodules --shallow-submodules https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
 
       - name: Compute cache key (prepare scripts hash + week number).
         shell: bash
