@@ -12,8 +12,25 @@ name: Build Windows (official tdesktop + unlimited accounts)
 # Libraries/win64/Qt-6.11.2 (hyphen!), which the cache glob [qQ]t_* does NOT
 # match (underscore vs hyphen) -> CMake prefix path pointed at a missing
 # folder. The installed Qt dir is now included via [qQ]t-* in both the save
-# and the restore paths, and is excluded from the trim step so the cached
-# copy stays complete.
+# and the restore paths.
+# (run 10) configure finally found Qt, but died on
+# Libraries/win64/tdesktop_rust/out/src/wallet_engine/wallet_engine.cpp:
+# the aggressive trim in the libraries job had deleted the .cpp glue and the
+# .rs/.toml sources of tlottie / wallet-engine / tdesktop_rust while their
+# stage keys stayed valid (upstream prepare.py even documents this exact
+# failure mode for its own CI prune). The trim is now the proven 64Gram
+# recipe: delete only *.obj *.pdb *.pch *.ilk (+ .git dirs), and the Rust
+# trio is force-rebuilt over the damaged cache before the base cache is
+# saved, so the cached copies are complete again.
+# (run 10) configure finally found Qt, but died on
+# Libraries/win64/tdesktop_rust/out/src/wallet_engine/wallet_engine.cpp:
+# the aggressive trim in the libraries job had deleted the .cpp glue and the
+# .rs/.toml sources of tlottie / wallet-engine / tdesktop_rust while their
+# stage keys stayed valid (upstream prepare.py even documents this exact
+# failure mode for its own CI prune). The trim is now the proven 64Gram
+# recipe: delete only *.obj *.pdb *.pch *.ilk (+ .git dirs), and the Rust
+# trio is force-rebuilt over the damaged cache before the base cache is
+# saved, so the cached copies are complete again.
 
 on:
   workflow_dispatch:
@@ -200,9 +217,28 @@ jobs:
             call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
           )
 
+      # Runs the FORCED (cache-bypassed) rebuild of the Rust stages.
+      # Caches saved by runs <= 10 had their sources stripped by the old
+      # trim (out/src/wallet_engine/wallet_engine.cpp gone, .rs/.toml of
+      # tlottie + wallet-engine gone) while the stage keys stayed valid, so
+      # a plain prepare would SKIP them and the build job would fail with
+      # "Cannot find source file: .../tdesktop_rust/out/src/wallet_engine/
+      # wallet_engine.cpp" (run 10). Forced rebuilds re-clone tlottie and
+      # wallet-engine and regenerate tdesktop_rust/out completely; the keys
+      # are rewritten with the same values, so later runs skip them again.
+      - name: Rebuild Rust stages over the damaged cache.
+        run: |
+          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent tlottie wallet-engine tdesktop_rust
+
+      # 64Gram-proven trim: only build junk is deleted. The previous
+      # aggressive keep-list trim deleted generated .cpp glue and library
+      # sources that the Telegram build compiles directly from Libraries
+      # (run 10 failure) — do NOT bring it back.
       - name: Free up some disk space (base).
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+        run: |
+          find $LibrariesPath -type f '(' -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' ')' -delete
+          find $LibrariesPath -depth -type d -name '.git' -delete
 
       - name: Save Libraries cache (base).
         uses: actions/cache/save@v6
@@ -221,9 +257,12 @@ jobs:
         run: |
           call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
 
+      # Same 64Gram-proven trim as the base step (see comment there).
       - name: Free up some disk space (Qt).
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/Qt-*' ')' -type f ')' -o -empty ')' -delete
+        run: |
+          find $LibrariesPath -type f '(' -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' ')' -delete
+          find $LibrariesPath -depth -type d -name '.git' -delete
 
       - name: Save ThirdParty cache.
         uses: actions/cache/save@v6
