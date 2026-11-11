@@ -234,11 +234,30 @@ jobs:
       # aggressive keep-list trim deleted generated .cpp glue and library
       # sources that the Telegram build compiles directly from Libraries
       # (run 10 failure) — do NOT bring it back.
+      # Run 11 lesson: right after the rebuild, Windows/Defender still holds
+      # handles on the freshly written .git dirs, so `find -delete` fails
+      # with "Directory not empty" and the step died AFTER the 15-minute
+      # rebuild but BEFORE the cache save. Make the trim best-effort:
+      # retry with sleeps and never fail — a leftover .git dir costs a few
+      # hundred MB of cache, a failed step costs the whole run.
       - name: Free up some disk space (base).
         shell: bash
         run: |
-          find $LibrariesPath -type f '(' -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' ')' -delete
-          find $LibrariesPath -depth -type d -name '.git' -delete
+          junk=( -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' )
+          for attempt in 1 2 3 4 5; do
+            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -print -quit 2>/dev/null | wc -l)
+            pending_d=$(find "$LibrariesPath" -depth -type d -name '.git' -print -quit 2>/dev/null | wc -l)
+            if [ "$pending_f" = "0" ] && [ "$pending_d" = "0" ]; then break; fi
+            echo "Trim attempt $attempt: $pending_f junk file(s) / $pending_d .git dir(s) pending..."
+            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -delete || true
+            # NOTE: plain `-delete` can NEVER remove a non-empty .git: the
+            # `-type d` filter keeps find from deleting the files inside, so
+            # rmdir always gets ENOTEMPTY (run 11). rm -rf takes the whole
+            # tree in one go and MSYS rm clears read-only attributes.
+            find "$LibrariesPath" -depth -type d -name '.git' -exec rm -rf '{}' + || true
+            sleep 10
+          done
+          exit 0
 
       - name: Save Libraries cache (base).
         uses: actions/cache/save@v6
@@ -257,12 +276,21 @@ jobs:
         run: |
           call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
 
-      # Same 64Gram-proven trim as the base step (see comment there).
+      # Same best-effort trim as the base step (see comment there).
       - name: Free up some disk space (Qt).
         shell: bash
         run: |
-          find $LibrariesPath -type f '(' -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' ')' -delete
-          find $LibrariesPath -depth -type d -name '.git' -delete
+          junk=( -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' )
+          for attempt in 1 2 3 4 5; do
+            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -print -quit 2>/dev/null | wc -l)
+            pending_d=$(find "$LibrariesPath" -depth -type d -name '.git' -print -quit 2>/dev/null | wc -l)
+            if [ "$pending_f" = "0" ] && [ "$pending_d" = "0" ]; then break; fi
+            echo "Trim attempt $attempt: $pending_f junk file(s) / $pending_d .git dir(s) pending..."
+            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -delete || true
+            find "$LibrariesPath" -depth -type d -name '.git' -exec rm -rf '{}' + || true
+            sleep 10
+          done
+          exit 0
 
       - name: Save ThirdParty cache.
         uses: actions/cache/save@v6
