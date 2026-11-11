@@ -6,7 +6,14 @@ name: Build Windows (official tdesktop + unlimited accounts)
 # targeting upstream telegramdesktop/tdesktop instead of a fork.
 # Runner fixes so far: (run 7) checkout was missing in the libraries job;
 # (run 8) the disk filled while INSTALLING Debug Qt -> the runner image is
-# trimmed first and the Qt stage is patched to build Release config only.
+# trimmed first and the Qt stage is patched to install RelWithDebInfo only.
+# (run 9) Libraries job finally succeeded, but the build job died with
+# "Neither Qt6 nor Qt5 is found": the Qt stage INSTALLS into
+# Libraries/win64/Qt-6.11.2 (hyphen!), which the cache glob [qQ]t_* does NOT
+# match (underscore vs hyphen) -> CMake prefix path pointed at a missing
+# folder. The installed Qt dir is now included via [qQ]t-* in both the save
+# and the restore paths, and is excluded from the trim step so the cached
+# copy stays complete.
 
 on:
   workflow_dispatch:
@@ -216,7 +223,7 @@ jobs:
 
       - name: Free up some disk space (Qt).
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/Qt-*' ')' -type f ')' -o -empty ')' -delete
 
       - name: Save ThirdParty cache.
         uses: actions/cache/save@v6
@@ -230,8 +237,12 @@ jobs:
           # tg_angle is built together with Qt (full prepare) but is NOT
           # matched by the [qQ]t_* pattern; list it explicitly or the build
           # job would rebuild it from scratch.
+          # [qQ]t-* is the INSTALLED Qt (Libraries/win64/Qt-6.11.2) — the
+          # run 9 failure was exactly this folder missing from the cache,
+          # because [qQ]t_* only matches the qt_6.11.2 source/build tree.
           path: |
             ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\[qQ]t-*
             ${{ env.LibrariesPath }}\tg_angle*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
             ${{ env.LibrariesPath }}\cache_keys\tg_angle*
@@ -375,8 +386,11 @@ jobs:
       - name: Restore Libraries cache (Qt).
         uses: actions/cache/restore@v6
         with:
+          # [qQ]t-* restores the INSTALLED Qt dir (Qt-6.11.2); without it the
+          # run 9 build job failed: "Neither Qt6 nor Qt5 is found".
           path: |
             ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\[qQ]t-*
             ${{ env.LibrariesPath }}\tg_angle*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
             ${{ env.LibrariesPath }}\cache_keys\tg_angle*
