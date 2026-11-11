@@ -4,6 +4,9 @@ name: Build Windows (official tdesktop + unlimited accounts)
 # that lifts the 3-account limit to (practically) unlimited.
 # Recipe adapted from the proven 64Gram CI (TDesktop-x64/tdesktop, win.yml)
 # targeting upstream telegramdesktop/tdesktop instead of a fork.
+# Runner fixes so far: (run 7) checkout was missing in the libraries job;
+# (run 8) the disk filled while INSTALLING Debug Qt -> the runner image is
+# trimmed first and the Qt stage is patched to build Release config only.
 
 on:
   workflow_dispatch:
@@ -45,6 +48,57 @@ jobs:
       - name: Checkout this repository (for the patches).
         uses: actions/checkout@v7
 
+      # Run 8 died with "No space left on device" while installing Debug Qt.
+      # Remove preinstalled SDKs/toolchains this build never uses (TBuild
+      # itself lives on C:, the small system drive of the runner).
+      - name: Free up disk space on the runner.
+        shell: powershell
+        run: |
+          $before = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+          Write-Host "Free space on C: before cleanup: $before GB"
+          $targets = @(
+            'C:\Program Files\Android',
+            'C:\Program Files (x86)\Android',
+            'C:\Users\runneradmin\AppData\Local\Android',
+            'C:\hostedtoolcache\windows\go',
+            'C:\hostedtoolcache\windows\Ruby',
+            'C:\hostedtoolcache\windows\PyPy',
+            'C:\hostedtoolcache\windows\stack',
+            'C:\hostedtoolcache\windows\ghc',
+            'C:\hostedtoolcache\windows\CodeQL',
+            'C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk*',
+            'C:\hostedtoolcache\windows\dotnet',
+            'C:\ProgramData\DockerDesktop',
+            'C:\Users\runneradmin\.docker',
+            'C:\Program Files\Mozilla Firefox',
+            'C:\Program Files (x86)\Mozilla Firefox',
+            'C:\Program Files\Google\Chrome',
+            'C:\Program Files (x86)\Google\Chrome',
+            'C:\Program Files\MySQL',
+            'C:\ProgramData\MySQL',
+            'C:\Program Files\PostgreSQL',
+            'C:\ProgramData\PostgreSQL',
+            'C:\Users\runneradmin\.rustup',
+            'C:\Users\runneradmin\.cargo',
+            'C:\Users\runneradmin\.gradle',
+            'C:\Users\runneradmin\.m2',
+            'C:\Users\runneradmin\.npm',
+            'C:\Users\runneradmin\.nuget',
+            'C:\ProgramData\Microsoft Visual Studio\Packages'
+          )
+          foreach ($t in $targets) {
+            if (Test-Path $t) {
+              try {
+                Remove-Item -Recurse -Force $t -ErrorAction Stop
+                Write-Host "removed: $t"
+              } catch {
+                Write-Host "could not remove ${t}: $($_.Exception.Message)"
+              }
+            }
+          }
+          $after = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+          Write-Host "Free space on C: after cleanup: $after GB (freed $([math]::Round($after - $before, 1)) GB)"
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
@@ -64,7 +118,8 @@ jobs:
       # breakpad link target entirely; deleting the stage here makes both
       # the named-stage pass AND a full `win.bat silent` prepare skip it.
       # (Renaming alone is NOT enough — filterByPlatform still registers it.)
-      - name: Remove breakpad stage (crash reports disabled, ATL missing on runner).
+      # The script ALSO trims the Qt 6 stage to Release-only (run 8 disk death).
+      - name: Patch prepare.py (drop breakpad, Release-only Qt).
         run: |
           python %GITHUB_WORKSPACE%\patches\remove-breakpad-stage.py %TBUILD%\tdesktop\Telegram\build\prepare\prepare.py
 
@@ -94,7 +149,12 @@ jobs:
         with:
           path: ${{ env.TBUILD }}\ThirdParty
           key: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
-          restore-keys: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+          # Bare-prefix fallback: patch-only edits shift CACHE_KEY, but the
+          # per-stage content keys stored INSIDE the cache keep every other
+          # stage valid (prepare.py skips stages whose cache_key matches).
+          restore-keys: |
+            win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+            win-tdesktop-thirdparty-
 
       - name: Restore Libraries cache (base, without Qt).
         uses: actions/cache/restore@v6
@@ -106,7 +166,9 @@ jobs:
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
           key: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
-          restore-keys: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+          restore-keys: |
+            win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+            win-tdesktop-libs-base-
 
       # All win64 stages except xz/libiconv (mac-only) and the Qt trio
       # (qt6_windows7, tg_angle, qt_*). NOTE: upstream has NO `crashpad`
@@ -165,9 +227,14 @@ jobs:
       - name: Save Libraries cache (Qt).
         uses: actions/cache/save@v6
         with:
+          # tg_angle is built together with Qt (full prepare) but is NOT
+          # matched by the [qQ]t_* pattern; list it explicitly or the build
+          # job would rebuild it from scratch.
           path: |
             ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\tg_angle*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\tg_angle*
           key: win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-${{ env.WEEK }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
 
   # ---------------------------------------------------------------
@@ -187,6 +254,55 @@ jobs:
       - name: Checkout this repository (for the patch).
         uses: actions/checkout@v7
 
+      # Same runner-image trim as in the libraries job (see comment there).
+      - name: Free up disk space on the runner.
+        shell: powershell
+        run: |
+          $before = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+          Write-Host "Free space on C: before cleanup: $before GB"
+          $targets = @(
+            'C:\Program Files\Android',
+            'C:\Program Files (x86)\Android',
+            'C:\Users\runneradmin\AppData\Local\Android',
+            'C:\hostedtoolcache\windows\go',
+            'C:\hostedtoolcache\windows\Ruby',
+            'C:\hostedtoolcache\windows\PyPy',
+            'C:\hostedtoolcache\windows\stack',
+            'C:\hostedtoolcache\windows\ghc',
+            'C:\hostedtoolcache\windows\CodeQL',
+            'C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk*',
+            'C:\hostedtoolcache\windows\dotnet',
+            'C:\ProgramData\DockerDesktop',
+            'C:\Users\runneradmin\.docker',
+            'C:\Program Files\Mozilla Firefox',
+            'C:\Program Files (x86)\Mozilla Firefox',
+            'C:\Program Files\Google\Chrome',
+            'C:\Program Files (x86)\Google\Chrome',
+            'C:\Program Files\MySQL',
+            'C:\ProgramData\MySQL',
+            'C:\Program Files\PostgreSQL',
+            'C:\ProgramData\PostgreSQL',
+            'C:\Users\runneradmin\.rustup',
+            'C:\Users\runneradmin\.cargo',
+            'C:\Users\runneradmin\.gradle',
+            'C:\Users\runneradmin\.m2',
+            'C:\Users\runneradmin\.npm',
+            'C:\Users\runneradmin\.nuget',
+            'C:\ProgramData\Microsoft Visual Studio\Packages'
+          )
+          foreach ($t in $targets) {
+            if (Test-Path $t) {
+              try {
+                Remove-Item -Recurse -Force $t -ErrorAction Stop
+                Write-Host "removed: $t"
+              } catch {
+                Write-Host "could not remove ${t}: $($_.Exception.Message)"
+              }
+            }
+          }
+          $after = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+          Write-Host "Free space on C: after cleanup: $after GB (freed $([math]::Round($after - $before, 1)) GB)"
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
@@ -198,8 +314,8 @@ jobs:
         run: |
           git -c core.autocrlf=false clone --depth 1 --shallow-submodules --recurse-submodules https://github.com/telegramdesktop/tdesktop.git %TBUILD%\tdesktop
 
-      # Same breakpad removal as the libraries job (see comment there).
-      - name: Remove breakpad stage (crash reports disabled, ATL missing on runner).
+      # Same prepare.py patch as the libraries job (see comment there).
+      - name: Patch prepare.py (drop breakpad, Release-only Qt).
         run: |
           python %GITHUB_WORKSPACE%\patches\remove-breakpad-stage.py %TBUILD%\tdesktop\Telegram\build\prepare\prepare.py
 
@@ -238,7 +354,9 @@ jobs:
         with:
           path: ${{ env.TBUILD }}\ThirdParty
           key: win-tdesktop-thirdparty-not-used-${{ github.run_id }}
-          restore-keys: win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+          restore-keys: |
+            win-tdesktop-thirdparty-${{ env.CACHE_KEY }}-
+            win-tdesktop-thirdparty-
 
       - name: Restore Libraries cache (base, without Qt).
         uses: actions/cache/restore@v6
@@ -250,16 +368,22 @@ jobs:
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
           key: win-tdesktop-libs-base-not-used-${{ github.run_id }}
-          restore-keys: win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+          restore-keys: |
+            win-tdesktop-libs-base-${{ env.CACHE_KEY }}-
+            win-tdesktop-libs-base-
 
       - name: Restore Libraries cache (Qt).
         uses: actions/cache/restore@v6
         with:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t_*
+            ${{ env.LibrariesPath }}\tg_angle*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t_*
+            ${{ env.LibrariesPath }}\cache_keys\tg_angle*
           key: win-tdesktop-libs-qt-not-used-${{ github.run_id }}
-          restore-keys: win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-
+          restore-keys: |
+            win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-
+            win-tdesktop-libs-qt-
 
       - name: Sync libraries (skips everything already cached).
         run: |
