@@ -240,16 +240,24 @@ jobs:
       # rebuild but BEFORE the cache save. Make the trim best-effort:
       # retry with sleeps and never fail — a leftover .git dir costs a few
       # hundred MB of cache, a failed step costs the whole run.
+      # Run 12 lesson: the INSTALLED static Qt (Qt-6.11.2) contains REAL
+      # .obj files (lib/objects-RelWithDebInfo/...) that Qt6GuiTargets.cmake
+      # references via imported targets like Qt6::Gui_resources_1. Trimming
+      # every *.obj destroyed the install and the build job's configure died
+      # with "but this file does not exist". The install tree (Qt-6.*,
+      # hyphen) is now EXCLUDED everywhere; the Qt BUILD tree (qt_6.11.2,
+      # underscore) is still trimmed as before.
       - name: Free up some disk space (base).
         shell: bash
         run: |
           junk=( -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' )
+          keep='*/[qQ]t-6.*/*'
           for attempt in 1 2 3 4 5; do
-            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -print -quit 2>/dev/null | wc -l)
+            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -not -path "$keep" -print -quit 2>/dev/null | wc -l)
             pending_d=$(find "$LibrariesPath" -depth -type d -name '.git' -print -quit 2>/dev/null | wc -l)
             if [ "$pending_f" = "0" ] && [ "$pending_d" = "0" ]; then break; fi
             echo "Trim attempt $attempt: $pending_f junk file(s) / $pending_d .git dir(s) pending..."
-            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -delete || true
+            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -not -path "$keep" -delete || true
             # NOTE: plain `-delete` can NEVER remove a non-empty .git: the
             # `-type d` filter keeps find from deleting the files inside, so
             # rmdir always gets ENOTEMPTY (run 11). rm -rf takes the whole
@@ -281,12 +289,13 @@ jobs:
         shell: bash
         run: |
           junk=( -name '*.obj' -o -name '*.pdb' -o -name '*.pch' -o -name '*.ilk' )
+          keep='*/[qQ]t-6.*/*'
           for attempt in 1 2 3 4 5; do
-            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -print -quit 2>/dev/null | wc -l)
+            pending_f=$(find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -not -path "$keep" -print -quit 2>/dev/null | wc -l)
             pending_d=$(find "$LibrariesPath" -depth -type d -name '.git' -print -quit 2>/dev/null | wc -l)
             if [ "$pending_f" = "0" ] && [ "$pending_d" = "0" ]; then break; fi
             echo "Trim attempt $attempt: $pending_f junk file(s) / $pending_d .git dir(s) pending..."
-            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -delete || true
+            find "$LibrariesPath" -type f '(' "${junk[@]}" ')' -not -path "$keep" -delete || true
             find "$LibrariesPath" -depth -type d -name '.git' -exec rm -rf '{}' + || true
             sleep 10
           done
@@ -465,6 +474,35 @@ jobs:
           restore-keys: |
             win-tdesktop-libs-qt-${{ env.CACHE_KEY }}-
             win-tdesktop-libs-qt-
+
+      # Run 12 auto-heal: the Qt cache saved by runs <= 12 lost the static
+      # Qt resource objects (lib/objects-RelWithDebInfo/**/*.obj) to the old
+      # trim, so configure dies at Qt6::Gui_resources_1. If the restored
+      # install is damaged, delete the Qt trio cache keys so the next step
+      # (Sync libraries) force-rebuilds them instead of SKIPPING into the
+      # same configure failure.
+      - name: Verify restored Qt install (auto-heal if damaged).
+        shell: bash
+        run: |
+          LP=$(cygpath -u "$LibrariesPath")
+          if ! ls "$LP"/[qQ]t-6.*/lib/cmake/Qt6Gui/Qt6GuiTargets.cmake >/dev/null 2>&1; then
+            echo "WARNING: Qt-6.* install (Qt6GuiTargets.cmake) NOT found in restored cache."
+            echo "Sync libraries will rebuild the Qt trio from scratch."
+            rm -fv "$LP"/cache_keys/[qQ]t* "$LP"/cache_keys/tg_angle*
+            exit 0
+          fi
+          if [ -z "$(find "$LP" -type d -path '*/objects-RelWithDebInfo' -print -quit 2>/dev/null)" ]; then
+            echo "Restored Qt has no objects-RelWithDebInfo dir — older Qt layout, nothing to verify."
+            exit 0
+          fi
+          n=$(find "$LP" -type f -path '*/objects-RelWithDebInfo/*' -name '*.obj' -print -quit 2>/dev/null | wc -l)
+          if [ "$n" = "0" ]; then
+            echo "Restored Qt install is DAMAGED: resource .obj files missing (run 12 failure mode)."
+            echo "Deleting Qt trio cache keys so Sync libraries rebuilds them..."
+            rm -fv "$LP"/cache_keys/[qQ]t* "$LP"/cache_keys/tg_angle*
+            exit 0
+          fi
+          echo "Restored Qt install verified: resource objects present."
 
       - name: Sync libraries (skips everything already cached).
         run: |
