@@ -39,6 +39,12 @@ jobs:
         shell: cmd
     steps:
 
+      # Needed so %GITHUB_WORKSPACE%\patches\remove-breakpad-stage.py exists.
+      # (run 7 failed exactly here: the patches folder was never checked out
+      #  in this job, so python could not open the script.)
+      - name: Checkout this repository (for the patches).
+        uses: actions/checkout@v7
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
@@ -107,9 +113,19 @@ jobs:
       # stage on Windows (mac-only) and breakpad was deleted above — the
       # crash client is disabled via DESKTOP_APP_DISABLE_CRASH_REPORTS.
       # If upstream renames a stage, the fallback below runs a full prepare.
+      # IMPORTANT: when stage names are passed, prepare.py sets checkResult
+      # to 'Forced' and rebuilds them with the cache BYPASSED (see runStages
+      # in prepare.py). So only run the explicit list when the base cache is
+      # genuinely absent (sentinel: cache_keys\tdesktop_rust, the last base
+      # stage); otherwise go straight to the full prepare, which SKIPS every
+      # stage whose cache key is still valid.
       - name: Libraries (base stages).
         run: |
-          call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent patches msys64 python NuGet jom rust lzma zlib mozjpeg openssl3 opus rnnoise gas-preprocessor dav1d openh264 libavif libwebp libjxl libvpx liblcms2 nv-codec-headers regex ffmpeg libheif openal-soft tg_owt ada tde2e tlottie wallet-engine tdesktop_rust
+          if not exist %LibrariesPath%\cache_keys\tdesktop_rust (
+            call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent patches msys64 python NuGet jom rust lzma zlib mozjpeg openssl3 opus rnnoise gas-preprocessor dav1d openh264 libavif libwebp libjxl libvpx liblcms2 nv-codec-headers regex ffmpeg libheif openal-soft tg_owt ada tde2e tlottie wallet-engine tdesktop_rust
+          ) else (
+            echo Base cache restored, skipping forced base rebuild.
+          )
           if %errorlevel% neq 0 (
             echo Base stage list failed, running full prepare instead...
             call %TBUILD%\tdesktop\Telegram\build\prepare\win.bat silent
