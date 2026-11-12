@@ -147,6 +147,14 @@ jobs:
         run: |
           python %GITHUB_WORKSPACE%\patches\remove-breakpad-stage.py %TBUILD%\tdesktop\Telegram\build\prepare\prepare.py
 
+      # Same run_cmake.py toolset patch as the build job (see comment there).
+      # Library stages build with the env cl via jom/Ninja, but keeping the
+      # helper consistent protects any stage that ever uses a VS generator.
+      - name: Patch run_cmake.py (toolset follows env VCToolsVersion).
+        run: |
+          python %GITHUB_WORKSPACE%\patches\pin-run-cmake-toolset.py %TBUILD%\tdesktop\cmake\run_cmake.py
+          findstr /C:"VCToolsVersion" %TBUILD%\tdesktop\cmake\run_cmake.py >nul || exit /b 1
+
       - name: Compute cache key (prepare scripts hash + week number).
         shell: bash
         run: |
@@ -406,6 +414,19 @@ jobs:
         run: |
           python %GITHUB_WORKSPACE%\patches\remove-breakpad-stage.py %TBUILD%\tdesktop\Telegram\build\prepare\prepare.py
 
+      # cmake_helpers' PINNED run_cmake.py appends `-T v143` unconditionally
+      # (it predates the explicit-toolset handling of master). On the
+      # windows-2025-vs2026 image `v143` resolves to MSVC 14.44 while every
+      # cached library was built with the env toolset MSVC 14.51 — the
+      # mismatch killed the codegen links with LNK2019 __std_* (run 14),
+      # and passing our own -T on the configure line died with
+      # "Multiple -T options not allowed" (run 15). Patch the helper so
+      # the toolset follows env VCToolsVersion instead (see the patch).
+      - name: Patch run_cmake.py (toolset follows env VCToolsVersion).
+        run: |
+          python %GITHUB_WORKSPACE%\patches\pin-run-cmake-toolset.py %TBUILD%\tdesktop\cmake\run_cmake.py
+          findstr /C:"VCToolsVersion" %TBUILD%\tdesktop\cmake\run_cmake.py >nul || exit /b 1
+
       - name: Apply unlimited-accounts patch.
         run: |
           git -C %TBUILD%\tdesktop apply --whitespace=nowarn %GITHUB_WORKSPACE%\patches\unlimited-accounts.patch || python -c "import io,re;p=r'%TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h';s=io.open(p,encoding='utf-8').read();s=re.sub(r'static constexpr auto kMaxAccounts = \d+;','static constexpr auto kMaxAccounts = 999;',s);s=re.sub(r'static constexpr auto kPremiumMaxAccounts = \d+;','static constexpr auto kPremiumMaxAccounts = 1000;',s);io.open(p,'w',encoding='utf-8',newline='').write(s)"
@@ -512,23 +533,17 @@ jobs:
         run: |
           cd %TBUILD%\tdesktop\Telegram
 
-          rem cmake_helpers' run_cmake.py appends `-T v143` when no explicit
-          rem toolset is given. On the windows-2025-vs2026 image `v143`
-          rem resolves to MSVC 14.44.35207, while EVERY cached library (Qt
-          rem 6.11.2, tg_angle, jxl, heif, openssl, ...) was compiled with the
-          rem env toolset MSVC 14.51.36231 (jom/Ninja builds via vcvars PATH).
-          rem Linking 14.51-built objects against 14.44's static STL
-          rem (libcpmt.lib) dies with LNK2019/LNK1120 on the __std_* vectorized
-          rem algorithm helpers (__std_rotate, __std_minmax_element_2u,
-          rem __std_unique_4, ...) — run 13. run_cmake.py honours an explicit
-          rem `-T` argument, so pin the SAME toolset the libraries used.
+          rem The toolset mismatch (libs 14.51 vs -T v143 -> 14.44) is fixed
+          rem earlier: patches/pin-run-cmake-toolset.py rewrote run_cmake.py
+          rem to emit `-T version=%VCToolsVersion%`. Guard here so a missing
+          rem env fails fast instead of reproducing the run 14 LNK2019.
           if "%VCToolsVersion%"=="" (
             echo ERROR: VCToolsVersion is not set; msvc-dev-cmd must run first.
             exit /b 1
           )
-          echo Pinning final build to MSVC toolset version %VCToolsVersion%.
+          echo Final build will use MSVC toolset version %VCToolsVersion%.
 
-          call configure.bat x64 -T version=%VCToolsVersion% ^
+          call configure.bat x64 ^
             -D TDESKTOP_API_ID=%TDESKTOP_API_ID% ^
             -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH% ^
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
