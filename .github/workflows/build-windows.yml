@@ -108,7 +108,21 @@ jobs:
             'C:\Users\runneradmin\.m2',
             'C:\Users\runneradmin\.npm',
             'C:\Users\runneradmin\.nuget',
-            'C:\ProgramData\Microsoft Visual Studio\Packages'
+            'C:\ProgramData\Microsoft Visual Studio\Packages',
+            'C:\Users\runneradmin\AppData\Local\Docker',
+            'C:\ProgramData\chocolatey',
+            'C:\SeleniumWebDrivers',
+            'C:\ghcup',
+            'C:\cabal',
+            'C:\mingw64',
+            'C:\vcpkg',
+            'C:\Strawberry',
+            'C:\Users\runneradmin\AppData\Local\wsl',
+            'C:\Users\runneradmin\AppData\Local\Packages\CanonicalGroupLimited*',
+            'C:\Users\runneradmin\AppData\Local\pip\cache',
+            'C:\Users\runneradmin\AppData\Local\Google\Chrome',
+            'C:\ProgramData\Google',
+            'C:\ProgramData\Mozilla'
           )
           foreach ($t in $targets) {
             if (Test-Path $t) {
@@ -123,10 +137,32 @@ jobs:
           $after = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
           Write-Host "Free space on C: after cleanup: $after GB (freed $([math]::Round($after - $before, 1)) GB)"
 
+      # Run 16 died with C1085/MSB6003 "No space left on device" deep inside
+      # Telegram.vcxproj: even after the trim C: had only 42 GB free and the
+      # main build consumed ALL of it. The runner also exposes a large data
+      # drive (D: — the workspace itself lives there), so put the REAL
+      # TBuild tree on whichever drive currently has more free space. The
+      # env vars below are unchanged: TBUILD / LibrariesPath point through
+      # the %GITHUB_WORKSPACE%\TBuild symlink, so cache keys and every
+      # downstream path stay byte-identical, and both jobs of this workflow
+      # run the same image and therefore pick the same drive.
+      - name: Pick the drive for TBuild (largest free space).
+        shell: powershell
+        run: |
+          $c = (Get-PSDrive C).Free
+          $d = 0
+          if (Get-PSDrive D -ErrorAction SilentlyContinue) { $d = (Get-PSDrive D).Free }
+          Write-Host ("Free space: C: {0:N1} GB | D: {1:N1} GB" -f ($c/1GB), ($d/1GB))
+          if ($d -gt $c) { $real = 'D:\TBuild' } else { $real = Join-Path $env:USERPROFILE 'TBuild' }
+          New-Item -ItemType Directory -Force -Path (Join-Path $real 'Libraries') | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "TBUILD_REAL=$real"
+          Write-Host "TBuild will live on: $real"
+
       - name: Prepare directories.
         run: |
-          mkdir %userprofile%\TBuild\Libraries
-          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          if not exist "%TBUILD_REAL%\Libraries" mkdir "%TBUILD_REAL%\Libraries"
+          if exist "%GITHUB_WORKSPACE%\TBuild" rmdir "%GITHUB_WORKSPACE%\TBuild"
+          mklink /d "%GITHUB_WORKSPACE%\TBuild" "%TBUILD_REAL%"
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
           echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
 
@@ -383,7 +419,21 @@ jobs:
             'C:\Users\runneradmin\.m2',
             'C:\Users\runneradmin\.npm',
             'C:\Users\runneradmin\.nuget',
-            'C:\ProgramData\Microsoft Visual Studio\Packages'
+            'C:\ProgramData\Microsoft Visual Studio\Packages',
+            'C:\Users\runneradmin\AppData\Local\Docker',
+            'C:\ProgramData\chocolatey',
+            'C:\SeleniumWebDrivers',
+            'C:\ghcup',
+            'C:\cabal',
+            'C:\mingw64',
+            'C:\vcpkg',
+            'C:\Strawberry',
+            'C:\Users\runneradmin\AppData\Local\wsl',
+            'C:\Users\runneradmin\AppData\Local\Packages\CanonicalGroupLimited*',
+            'C:\Users\runneradmin\AppData\Local\pip\cache',
+            'C:\Users\runneradmin\AppData\Local\Google\Chrome',
+            'C:\ProgramData\Google',
+            'C:\ProgramData\Mozilla'
           )
           foreach ($t in $targets) {
             if (Test-Path $t) {
@@ -398,10 +448,32 @@ jobs:
           $after = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
           Write-Host "Free space on C: after cleanup: $after GB (freed $([math]::Round($after - $before, 1)) GB)"
 
+      # Run 16 died with C1085/MSB6003 "No space left on device" deep inside
+      # Telegram.vcxproj: even after the trim C: had only 42 GB free and the
+      # main build consumed ALL of it. The runner also exposes a large data
+      # drive (D: — the workspace itself lives there), so put the REAL
+      # TBuild tree on whichever drive currently has more free space. The
+      # env vars below are unchanged: TBUILD / LibrariesPath point through
+      # the %GITHUB_WORKSPACE%\TBuild symlink, so cache keys and every
+      # downstream path stay byte-identical, and both jobs of this workflow
+      # run the same image and therefore pick the same drive.
+      - name: Pick the drive for TBuild (largest free space).
+        shell: powershell
+        run: |
+          $c = (Get-PSDrive C).Free
+          $d = 0
+          if (Get-PSDrive D -ErrorAction SilentlyContinue) { $d = (Get-PSDrive D).Free }
+          Write-Host ("Free space: C: {0:N1} GB | D: {1:N1} GB" -f ($c/1GB), ($d/1GB))
+          if ($d -gt $c) { $real = 'D:\TBuild' } else { $real = Join-Path $env:USERPROFILE 'TBuild' }
+          New-Item -ItemType Directory -Force -Path (Join-Path $real 'Libraries') | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "TBUILD_REAL=$real"
+          Write-Host "TBuild will live on: $real"
+
       - name: Prepare directories.
         run: |
-          mkdir %userprofile%\TBuild\Libraries
-          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          if not exist "%TBUILD_REAL%\Libraries" mkdir "%TBUILD_REAL%\Libraries"
+          if exist "%GITHUB_WORKSPACE%\TBuild" rmdir "%GITHUB_WORKSPACE%\TBuild"
+          mklink /d "%GITHUB_WORKSPACE%\TBuild" "%TBUILD_REAL%"
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
           echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
 
