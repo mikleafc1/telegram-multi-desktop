@@ -512,7 +512,23 @@ jobs:
         run: |
           cd %TBUILD%\tdesktop\Telegram
 
-          call configure.bat x64 ^
+          rem cmake_helpers' run_cmake.py appends `-T v143` when no explicit
+          rem toolset is given. On the windows-2025-vs2026 image `v143`
+          rem resolves to MSVC 14.44.35207, while EVERY cached library (Qt
+          rem 6.11.2, tg_angle, jxl, heif, openssl, ...) was compiled with the
+          rem env toolset MSVC 14.51.36231 (jom/Ninja builds via vcvars PATH).
+          rem Linking 14.51-built objects against 14.44's static STL
+          rem (libcpmt.lib) dies with LNK2019/LNK1120 on the __std_* vectorized
+          rem algorithm helpers (__std_rotate, __std_minmax_element_2u,
+          rem __std_unique_4, ...) — run 13. run_cmake.py honours an explicit
+          rem `-T` argument, so pin the SAME toolset the libraries used.
+          if "%VCToolsVersion%"=="" (
+            echo ERROR: VCToolsVersion is not set; msvc-dev-cmd must run first.
+            exit /b 1
+          )
+          echo Pinning final build to MSVC toolset version %VCToolsVersion%.
+
+          call configure.bat x64 -T version=%VCToolsVersion% ^
             -D TDESKTOP_API_ID=%TDESKTOP_API_ID% ^
             -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH% ^
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
