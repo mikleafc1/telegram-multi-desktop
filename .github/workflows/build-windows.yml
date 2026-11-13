@@ -31,6 +31,19 @@ name: Build Windows (official tdesktop + unlimited accounts)
 # recipe: delete only *.obj *.pdb *.pch *.ilk (+ .git dirs), and the Rust
 # trio is force-rebuilt over the damaged cache before the base cache is
 # saved, so the cached copies are complete again.
+# (run 16) Build job died with C1085 "No space left on device" while writing
+# Telegram.dir/Release/*.obj (42 GB free was still not enough).
+# (run 17) Build job got all the way to the FINAL Telegram.exe link and died
+# with LNK1102 "out of memory". Root cause found in desktop-app/cmake_helpers
+# variables.cmake: CMAKE_MSVC_DEBUG_INFORMATION_FORMAT is hard-set to
+# "$<$<CONFIG:Debug>:ProgramDatabase>$<$<NOT:$<CONFIG:Debug>>:Embedded>" ->
+# EVERY Release object carries full /Z7 debug info, and the final link must
+# merge all of it in RAM (LNK1102) while the bloated objects eat the disk
+# (run 16's C1085). Fix = the proven 64Gram CI recipe: pass
+# -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= (empty -> no debug info anywhere;
+# the command-line -D creates the cache entry first, so helpers' set(CACHE)
+# can no longer override it) and strip the ${_Zi} default from
+# Windows-MSVC.cmake. 64Gram ships its released exe exactly this way.
 
 on:
   workflow_dispatch:
@@ -499,6 +512,27 @@ jobs:
           python %GITHUB_WORKSPACE%\patches\pin-run-cmake-toolset.py %TBUILD%\tdesktop\cmake\run_cmake.py
           findstr /C:"VCToolsVersion" %TBUILD%\tdesktop\cmake\run_cmake.py >nul || exit /b 1
 
+      # Run 17 fix (64Gram CI recipe): without this, cmake_helpers forces
+      # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded for Release -> /Z7 in
+      # every object -> final link LNK1102 out of memory + disk bloat
+      # (run 16). The -D flag below (added to configure) is the primary fix;
+      # this sed only strips the ${_Zi} fallback from CMake's default flag
+      # tables. Non-fatal: if CMake's layout changed, the -D still holds.
+      - name: Strip /Zi defaults from CMake MSVC module (run 17 fix).
+        shell: bash
+        run: |
+          F=$(ls "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake 2>/dev/null | head -1)
+          if [ -n "$F" ] && grep -q '_Zi' "$F"; then
+            sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$F"
+            if grep -q 'FLAGS_DEBUG_INIT.*_Zi' "$F"; then
+              echo "WARNING: ${_Zi} still present after sed"
+            else
+              echo "Windows-MSVC.cmake patched: ${_Zi} removed from DEBUG_INIT"
+            fi
+          else
+            echo "Windows-MSVC.cmake not found or already clean; relying on the -D flag"
+          fi
+
       - name: Apply unlimited-accounts patch.
         run: |
           git -C %TBUILD%\tdesktop apply --whitespace=nowarn %GITHUB_WORKSPACE%\patches\unlimited-accounts.patch || python -c "import io,re;p=r'%TBUILD%\tdesktop\Telegram\SourceFiles\main\main_domain.h';s=io.open(p,encoding='utf-8').read();s=re.sub(r'static constexpr auto kMaxAccounts = \d+;','static constexpr auto kMaxAccounts = 999;',s);s=re.sub(r'static constexpr auto kPremiumMaxAccounts = \d+;','static constexpr auto kPremiumMaxAccounts = 1000;',s);io.open(p,'w',encoding='utf-8',newline='').write(s)"
@@ -620,6 +654,7 @@ jobs:
             -D TDESKTOP_API_HASH=%TDESKTOP_API_HASH% ^
             -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
             -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
+            -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
             -D CMAKE_CONFIGURATION_TYPES=Release
 
           cmake --build ..\out --config Release --parallel
