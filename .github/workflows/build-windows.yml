@@ -659,12 +659,63 @@ jobs:
 
           cmake --build ..\out --config Release --parallel
 
+      # User request: also produce an INSTALLER (setup exe), not just the
+      # portable Telegram.exe. We reuse the official Inno Setup script
+      # (Telegram/build/setup.iss) exactly like the official build.bat does:
+      #   iscc /dMyAppVersion=... /dMyAppVersionFull=... /dReleasePath=...
+      #        /dMyBuildTarget=win64 setup.iss
+      # Adaptations (make-setup-iss.py): no signing (no key), and the
+      # optional Updater.exe / d3dcompiler_47.dll [Files] entries are stripped
+      # when those files were not built (autoupdate is disabled here).
+      - name: Build installer (Inno Setup).
+        run: |
+          set RELEASE=%TBUILD%\tdesktop\out\Release
+          if not exist "%RELEASE%\Telegram.exe" (
+            echo ERROR: %RELEASE%\Telegram.exe is missing, build failed silently.
+            exit /b 1
+          )
+
+          rem Optional d3d module (same file the official installer packs).
+          if not exist "%RELEASE%\modules\x64\d3d" mkdir "%RELEASE%\modules\x64\d3d"
+          set "D3D=%TBUILD%\Libraries\win64\cmake_helpers\win_directx_helper\modules\x64\d3d\d3dcompiler_47.dll"
+          if exist "%D3D%" copy /y "%D3D%" "%RELEASE%\modules\x64\d3d\d3dcompiler_47.dll" >nul
+
+          python %GITHUB_WORKSPACE%\patches\make-setup-iss.py %TBUILD%\tdesktop\Telegram\build\setup.iss "%RELEASE%"
+          if not exist %TBUILD%\tdesktop\Telegram\build\setup-unlimited.iss exit /b 1
+
+          set "ISCC="
+          if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+          if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 5\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 5\ISCC.exe"
+          if not defined ISCC (
+            echo Inno Setup not found - installing via chocolatey...
+            choco install innosetup -y --no-progress
+            if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          )
+          if not defined ISCC (
+            echo ERROR: ISCC.exe not found even after chocolatey install.
+            exit /b 1
+          )
+
+          for /f "tokens=1,2 delims= " %%i in (%TBUILD%\tdesktop\Telegram\build\version) do set VER_%%i=%%j
+          echo Building installer for version %VER_AppVersionStr%
+
+          "%ISCC%" /dMyAppVersion=%VER_AppVersionStr% /dMyAppVersionZero=%VER_AppVersionStr% /dMyAppVersionFull=%VER_AppVersionStr% /dReleasePath=%RELEASE% /dMyBuildTarget=win64 /dMyOutputBaseFilename=Telegram-unlimited-accounts-setup %TBUILD%\tdesktop\Telegram\build\setup-unlimited.iss || exit /b 1
+
+          if not exist "%RELEASE%\Telegram-unlimited-accounts-setup.exe" (
+            echo ERROR: installer was not produced by ISCC.
+            exit /b 1
+          )
+          echo Installer OK: %RELEASE%\Telegram-unlimited-accounts-setup.exe
+
       - name: Collect artifact.
         run: |
           set OUT=%TBUILD%\tdesktop\out\Release
           mkdir %GITHUB_WORKSPACE%\artifact
+          mkdir %GITHUB_WORKSPACE%\artifact-setup
           move %OUT%\Telegram.exe %GITHUB_WORKSPACE%\artifact\
           if exist %OUT%\Updater.exe move %OUT%\Updater.exe %GITHUB_WORKSPACE%\artifact\
+          if exist %OUT%\Telegram-unlimited-accounts-setup.exe move %OUT%\Telegram-unlimited-accounts-setup.exe %GITHUB_WORKSPACE%\artifact-setup\
           powershell -NoProfile -Command "Compress-Archive -Path '%GITHUB_WORKSPACE%\artifact\*' -DestinationPath '%GITHUB_WORKSPACE%\Telegram-unlimited-accounts-win64.zip' -Force"
 
       - uses: actions/upload-artifact@v7
@@ -672,5 +723,13 @@ jobs:
         with:
           name: windows-exe
           path: ${{ github.workspace }}\Telegram-unlimited-accounts-win64.zip
+          retention-days: 14
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        name: Upload installer artifact.
+        with:
+          name: windows-setup
+          path: ${{ github.workspace }}\artifact-setup\Telegram-unlimited-accounts-setup.exe
           retention-days: 14
           if-no-files-found: error
