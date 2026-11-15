@@ -1,0 +1,74 @@
+# ============================================================
+# Android crash diagnostic — boots an emulator, installs the
+# built APK, launches it and captures the real stack trace.
+# ============================================================
+
+name: android-crash-diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: Download built APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-second
+          run-id: 43718589696
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+          kvm-ok || true
+
+      - name: Install emulator components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+
+      - name: Boot emulator
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          for i in $(seq 1 45); do
+            if "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED after $i x 10s"; break; fi
+            sleep 10
+          done
+          "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed || true
+
+      - name: Install APK, launch, capture crash
+        run: |
+          A="$ANDROID_HOME/platform-tools/adb"
+          ls -la
+          "$A" install -r Telegram2-Android-Unlimited.apk
+          "$A" logcat -c || true
+          "$A" shell monkey -p org.telegram.messenger.web -c android.intent.category.LAUNCHER 1 || true
+          sleep 30
+          "$A" logcat -d -b crash > crash.log || true
+          "$A" logcat -d > full.log || true
+          echo "=== PROCESS STATE ==="
+          "$A" shell pidof org.telegram.messenger.web || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 8000 crash.log || true
+          echo
+          echo "=== FATAL SECTION (main log) ==="
+          grep -B2 -A 80 "FATAL EXCEPTION" full.log | head -120 || true
+          echo "=== AndroidRuntime tail ==="
+          grep -A 40 "AndroidRuntime" full.log | head -60 || true
+
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-diagnostic-logs
+          path: |
+            crash.log
+            full.log
