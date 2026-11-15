@@ -73,19 +73,17 @@ jobs:
       - name: Patch unlimited accounts + standalone identity
         run: |
           set -e
-          # 1) Unlimited accounts (official limit is 4)
-          F=TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
-          sed -i 's/public final static int MAX_ACCOUNT_COUNT = 4;/public final static int MAX_ACCOUNT_COUNT = 999;/' "$F"
-          grep -n "MAX_ACCOUNT_COUNT = " "$F" | head -1
-
-          # 2) Version suffix (build marker)
+          # Full unlimited-accounts patch (Nagram-style): guards all eager
+          # per-account loops, dynamic native getInstance, per-instance delegates.
+          python3 .github/patches/unlimited_accounts.py .
+          # Build marker
           sed -i "s/^APP_VERSION_NAME=.*/APP_VERSION_NAME=13.2.2$VSUFFIX/" gradle.properties
           grep -n "APP_VERSION_NAME" gradle.properties
 
-          # 3) Second standalone app: unique applicationId + matching Firebase
-          #    client config (plugin refuses mismatched packages). Manifest
-          #    authorities/permissions already use \${applicationId} so parallel
-          #    install stays safe. Launcher label is renamed too.
+          # Second standalone app: unique applicationId + matching Firebase
+          # client config (plugin refuses mismatched packages). Manifest
+          # authorities/permissions already use \${applicationId} so parallel
+          # install stays safe. Launcher label is renamed too.
           if [ "$PKG" != "org.telegram.messenger" ]; then
             sed -i "s/^APP_PACKAGE=.*/APP_PACKAGE=$PKG/" gradle.properties
             for G in TMessagesProj/google-services.json TMessagesProj_App/google-services.json; do
