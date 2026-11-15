@@ -30,14 +30,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install exact SDK components (compileSdk 36 / NDK 27.2 / CMake 3.22.1)
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
-          sdkmanager --list_installed
+          # ubuntu-latest ships a full Android SDK; android-actions/setup-android@v3
+          # currently fails on the removed legacy 'tools' package, so use the
+          # preinstalled sdkmanager directly.
+          export PATH="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin | head -1):$ANDROID_HOME/platform-tools:$PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager" --licenses > /dev/null || true
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+          "$SDKM" --list_installed
 
       - name: Patch unlimited accounts (MAX_ACCOUNT_COUNT 4 -> 999)
         run: |
