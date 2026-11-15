@@ -54,9 +54,7 @@ jobs:
           A="$ANDROID_HOME/platform-tools/adb"
           "$A" wait-for-device || true
           "$A" install -r official-telegram.apk || true
-          PKG=$("$A" shell pm list packages | grep -oE 'package:[a-z0-9._]+' | head -5)
-          echo "packages: $PKG"
-          OFFICIAL=$(echo "$PKG" | grep -oE 'org\.telegram[a-z0-9._]*' | head -1)
+          OFFICIAL=$("$A" shell pm list packages | grep -iE 'telegram' | head -1 | sed 's/package://')
           echo "official package: $OFFICIAL"
           "$A" logcat -c || true
           "$A" shell monkey -p "$OFFICIAL" -c android.intent.category.LAUNCHER 1 || true
