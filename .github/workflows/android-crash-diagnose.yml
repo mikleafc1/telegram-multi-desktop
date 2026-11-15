@@ -29,13 +29,20 @@ jobs:
           kvm-ok || true
 
       - name: Install emulator components
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
         run: |
           SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
           echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+          ls -la "$HOME/.android/avd"
+          "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" list avd || true
 
       - name: Boot emulator
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
         run: |
           "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
           for i in $(seq 1 45); do
@@ -47,8 +54,9 @@ jobs:
       - name: Install APK, launch, capture crash
         run: |
           A="$ANDROID_HOME/platform-tools/adb"
+          "$A" wait-for-device || true
           ls -la
-          "$A" install -r Telegram2-Android-Unlimited.apk
+          "$A" install -r Telegram2-Android-Unlimited.apk || true
           "$A" logcat -c || true
           "$A" shell monkey -p org.telegram.messenger.web -c android.intent.category.LAUNCHER 1 || true
           sleep 30
@@ -60,9 +68,9 @@ jobs:
           head -c 8000 crash.log || true
           echo
           echo "=== FATAL SECTION (main log) ==="
-          grep -B2 -A 80 "FATAL EXCEPTION" full.log | head -120 || true
+          (grep -B2 -A 80 "FATAL EXCEPTION" full.log | head -120) || true
           echo "=== AndroidRuntime tail ==="
-          grep -A 40 "AndroidRuntime" full.log | head -60 || true
+          (grep -A 40 "AndroidRuntime" full.log | head -60) || true
 
       - name: Save logs
         if: always()
