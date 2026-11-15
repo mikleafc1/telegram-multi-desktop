@@ -1,0 +1,126 @@
+# ============================================================
+# Nagram (Telegram 13.1.1 + unlimited accounts=128, battle-tested
+# fork by NextAlone) — release build from published tag 1258.
+# Package xyz.nextalone.nagram → installs ALONGSIDE official Telegram.
+# Recipe mirrors Nagram's own .github/workflows/release.yml.
+# ============================================================
+
+name: nagram-apk-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: Checkout Nagram source (tag 1258 = v13.1.1 release)
+        uses: actions/checkout@v4
+        with:
+          repository: NextAlone/Nagram
+          ref: '1258'
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install SDK components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+          "$SDKM" --list_installed | head -8
+
+      - name: Configure build environment (Nagram recipe)
+        run: |
+          sed -i "s/2000000000000/$(date +%s%N | cut -c1-13)/g" gradle.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ndk.dir=$ANDROID_HOME/ndk/27.2.12479018" >> local.properties
+          grep -E "APP_VERSION|APP_PACKAGE" gradle.properties
+
+      - name: Build release APKs (all ABIs, signed)
+        run: |
+          ./gradlew TMessagesProj:assembleRelease --build-cache --no-configuration-cache --stacktrace
+
+      - name: Collect APKs
+        run: |
+          find TMessagesProj/build/outputs/apk -name '*.apk' -exec ls -la {} \;
+          mkdir -p out
+          find TMessagesProj/build/outputs/apk -name '*.apk' -exec cp {} out/ \;
+          ls -la out/
+          sha256sum out/*.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nagram-apks
+          path: out/
+          retention-days: 30
+
+  test-x86:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nagram-apks
+          path: apks
+      - run: ls -la apks/
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+      - name: Emulator setup
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+      - name: Boot + test Nagram
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          A="$ANDROID_HOME/platform-tools/adb"
+          for i in $(seq 1 45); do
+            if "$A" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED"; break; fi
+            sleep 10
+          done
+          "$A" wait-for-device || true
+          APK=$(find apks -name '*x86_64*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "NO x86_64 APK PRODUCED — skipping emulator test (arm64-only build)"
+            exit 0
+          fi
+          echo "testing $APK"
+          "$A" install -r "$APK" || true
+          "$A" logcat -c || true
+          "$A" shell monkey -p xyz.nextalone.nagram -c android.intent.category.LAUNCHER 1 || true
+          sleep 45
+          "$A" logcat -d -b crash > crash.log || true
+          echo "=== NAGRAM BUILD RESULT ==="
+          "$A" shell pidof xyz.nextalone.nagram || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 4000 crash.log || true
+          "$A" logcat -d > full.log || true
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nagram-test-logs
+          path: |
+            crash.log
+            full.log
