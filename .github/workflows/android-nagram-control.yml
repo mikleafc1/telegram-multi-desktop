@@ -1,0 +1,77 @@
+# ============================================================
+# Control experiment 2: Nagram fork APK (production-proven build
+# of Telegram-13.1.1-based code with MAX_ACCOUNT_COUNT=128) on
+# the same emulator. If it survives, the emulator is fine and
+# our master-based build is the problem.
+# ============================================================
+
+name: android-nagram-control-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  nagram-control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: Download Nagram APK
+        run: |
+          curl -sL --max-time 300 -o nagram.apk "https://github.com/NextAlone/Nagram/releases/download/1258/Nagram-v13.1.1.1258-arm64-v8a.apk"
+          ls -la nagram.apk
+
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+
+      - name: Install emulator components
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+
+      - name: Boot emulator
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          for i in $(seq 1 45); do
+            if "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED after $i x 10s"; break; fi
+            sleep 10
+          done
+          "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed || true
+
+      - name: Install Nagram, launch, capture
+        run: |
+          A="$ANDROID_HOME/platform-tools/adb"
+          "$A" wait-for-device || true
+          "$A" install -r nagram.apk || true
+          "$A" logcat -c || true
+          "$A" shell monkey -p xyz.nextalone.nagram -c android.intent.category.LAUNCHER 1 || true
+          sleep 60
+          "$A" logcat -d -b crash > crash.log || true
+          "$A" logcat -d > full.log || true
+          echo "=== PROCESS STATE ==="
+          "$A" shell pidof xyz.nextalone.nagram || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 6000 crash.log || true
+          echo
+          echo "=== FATAL SECTION ==="
+          (grep -B2 -A 60 "FATAL EXCEPTION" full.log | head -90) || true
+          (grep -A 30 "Fatal signal" full.log | head -40) || true
+
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nagram-control-logs
+          path: |
+            crash.log
+            full.log
