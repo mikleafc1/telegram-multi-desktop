@@ -1,0 +1,189 @@
+# ============================================================
+# Bisect: build (a) clean master and (b) master + MAX_ACCOUNT_COUNT=999,
+# then run BOTH on the emulator to see which one crashes.
+# ============================================================
+
+name: android-bisect-build-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout official Telegram source
+        uses: actions/checkout@v4
+        with:
+          repository: DrKLO/Telegram
+          ref: master
+          fetch-depth: 1
+          submodules: recursive
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install exact SDK components
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+      - name: Build clean afatRelease
+        run: ./gradlew :TMessagesProj_App:assembleAfatRelease --stacktrace
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-clean
+          path: TMessagesProj_App/build/outputs/apk/afat/release/app.apk
+          retention-days: 10
+
+  build-999:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout official Telegram source
+        uses: actions/checkout@v4
+        with:
+          repository: DrKLO/Telegram
+          ref: master
+          fetch-depth: 1
+          submodules: recursive
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install exact SDK components
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+      - name: Patch MAX_ACCOUNT_COUNT only
+        run: |
+          F=TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
+          sed -i 's/public final static int MAX_ACCOUNT_COUNT = 4;/public final static int MAX_ACCOUNT_COUNT = 999;/' "$F"
+          grep -n "MAX_ACCOUNT_COUNT = " "$F" | head -1
+      - name: Build patched afatRelease
+        run: ./gradlew :TMessagesProj_App:assembleAfatRelease --stacktrace
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-999
+          path: TMessagesProj_App/build/outputs/apk/afat/release/app.apk
+          retention-days: 10
+
+  test-clean:
+    needs: build-clean
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk-clean
+          path: apk
+      - run: mv apk/app.apk build.apk && ls -la build.apk
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+      - name: Emulator setup
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+      - name: Boot + test
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          A="$ANDROID_HOME/platform-tools/adb"
+          for i in $(seq 1 45); do
+            if "$A" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED"; break; fi
+            sleep 10
+          done
+          "$A" wait-for-device || true
+          "$A" install -r build.apk || true
+          "$A" logcat -c || true
+          "$A" shell monkey -p org.telegram.messenger -c android.intent.category.LAUNCHER 1 || true
+          sleep 45
+          "$A" logcat -d -b crash > crash.log || true
+          echo "=== CLEAN BUILD RESULT ==="
+          "$A" shell pidof org.telegram.messenger || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 4000 crash.log || true
+          "$A" logcat -d > full.log || true
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-test-logs
+          path: |
+            crash.log
+            full.log
+
+  test-999:
+    needs: build-999
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk-999
+          path: apk
+      - run: mv apk/app.apk build.apk && ls -la build.apk
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+      - name: Emulator setup
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+      - name: Boot + test
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          A="$ANDROID_HOME/platform-tools/adb"
+          for i in $(seq 1 45); do
+            if "$A" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED"; break; fi
+            sleep 10
+          done
+          "$A" wait-for-device || true
+          "$A" install -r build.apk || true
+          "$A" logcat -c || true
+          "$A" shell monkey -p org.telegram.messenger -c android.intent.category.LAUNCHER 1 || true
+          sleep 45
+          "$A" logcat -d -b crash > crash.log || true
+          echo "=== 999 BUILD RESULT ==="
+          "$A" shell pidof org.telegram.messenger || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 4000 crash.log || true
+          "$A" logcat -d > full.log || true
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p999-test-logs
+          path: |
+            crash.log
+            full.log
