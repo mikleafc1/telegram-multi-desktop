@@ -1,0 +1,82 @@
+# ============================================================
+# Control experiment: install the OFFICIAL Telegram APK from
+# telegram.org on the same emulator. If the official APK also
+# SIGSEGVs, the emulator environment is the problem — not our build.
+# ============================================================
+
+name: android-official-control-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - name: Download official Telegram APK
+        run: |
+          curl -sL --max-time 300 -o official-telegram.apk "https://telegram.org/dl/android/apk"
+          ls -la official-telegram.apk
+          file official-telegram.apk
+
+      - name: Enable KVM
+        run: |
+          sudo -E apt-get -yq --no-install-recommends install cpu-checker > /dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; else echo "NO KVM DEVICE"; fi
+
+      - name: Install emulator components
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "emulator" "platform-tools" "system-images;android-34;google_apis;x86_64" > /dev/null
+          mkdir -p "$HOME/.android/avd"
+          echo no | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/avdmanager" create avd -n diag -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+          ls -la "$HOME/.android/avd"
+
+      - name: Boot emulator
+        env:
+          ANDROID_AVD_HOME: /home/runner/.android/avd
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd diag -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 &
+          for i in $(seq 1 45); do
+            if "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | grep -q 1; then echo "BOOTED after $i x 10s"; break; fi
+            sleep 10
+          done
+          "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed || true
+
+      - name: Install official APK, launch, capture
+        run: |
+          A="$ANDROID_HOME/platform-tools/adb"
+          "$A" wait-for-device || true
+          "$A" install -r official-telegram.apk || true
+          PKG=$("$A" shell pm list packages | grep -oE 'package:[a-z0-9._]+' | head -5)
+          echo "packages: $PKG"
+          OFFICIAL=$(echo "$PKG" | grep -oE 'org\.telegram[a-z0-9._]*' | head -1)
+          echo "official package: $OFFICIAL"
+          "$A" logcat -c || true
+          "$A" shell monkey -p "$OFFICIAL" -c android.intent.category.LAUNCHER 1 || true
+          sleep 60
+          "$A" logcat -d -b crash > crash.log || true
+          "$A" logcat -d > full.log || true
+          echo "=== PROCESS STATE ($OFFICIAL) ==="
+          "$A" shell pidof "$OFFICIAL" || echo "PROCESS DEAD"
+          echo "=== CRASH BUFFER ==="
+          head -c 6000 crash.log || true
+          echo
+          echo "=== FATAL SECTION ==="
+          (grep -B2 -A 60 "FATAL EXCEPTION" full.log | head -90) || true
+          (grep -A 30 "Fatal signal" full.log | head -40) || true
+
+      - name: Save logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-control-logs
+          path: |
+            crash.log
+            full.log

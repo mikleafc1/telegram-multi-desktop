@@ -69,7 +69,9 @@ jobs:
           A="$ANDROID_HOME/platform-tools/adb"
           "$A" wait-for-device || true
           ls -la
-          "$A" install -r Telegram2-Android-Unlimited.apk || true
+          APKFILE=$(ls *.apk | head -1)
+          echo "installing $APKFILE"
+          "$A" install -r "$APKFILE" || true
           "$A" logcat -c || true
           "$A" shell monkey -p ${{ inputs.package || 'org.telegram.messenger.web' }} -c android.intent.category.LAUNCHER 1 || true
           sleep 30
