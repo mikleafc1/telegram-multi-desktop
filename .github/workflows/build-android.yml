@@ -75,7 +75,10 @@ jobs:
           set -e
           # Full unlimited-accounts patch (Nagram-style): guards all eager
           # per-account loops, dynamic native getInstance, per-instance delegates.
-          python3 .github/patches/unlimited_accounts.py .
+          # NOTE: workspace is the DrKLO/Telegram checkout, so fetch the patcher
+          # from our own repo's raw content first.
+          curl -sL -o unlimited_accounts.py "https://raw.githubusercontent.com/${{ github.repository }}/main/.github/patches/unlimited_accounts.py"
+          python3 unlimited_accounts.py .
           # Build marker
           sed -i "s/^APP_VERSION_NAME=.*/APP_VERSION_NAME=13.2.2$VSUFFIX/" gradle.properties
           grep -n "APP_VERSION_NAME" gradle.properties
