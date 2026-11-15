@@ -19,7 +19,7 @@ on:
       package:
         description: 'APK applicationId'
         required: false
-        default: '${{ inputs.package || 'org.telegram.messenger.web' }}'
+        default: 'org.telegram.messenger.web'
 
 jobs:
   diagnose:
