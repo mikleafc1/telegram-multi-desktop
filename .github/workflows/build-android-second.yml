@@ -1,0 +1,81 @@
+# ============================================================
+# Telegram Android #2 (Unlimited Accounts) — second/parallel app
+# Source: DrKLO/Telegram master (official Telegram for Android)
+# Goal : install ALONGSIDE the official Telegram, not as its update.
+#        applicationId = org.telegram.messenger.web  (the official
+#        standalone id — present in the repo's google-services.json,
+#        so FCM push keeps working; signature differs from Play).
+# Patch: UserConfig.MAX_ACCOUNT_COUNT 4 -> 999
+#        AppName -> "Telegram Unlimited 2"
+# Output: Telegram2-Android-Unlimited.apk (afatRelease, all ABIs, signed)
+# ============================================================
+
+name: build-android-apk-second
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk-second:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout official Telegram source
+        uses: actions/checkout@v4
+        with:
+          repository: DrKLO/Telegram
+          ref: master
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install exact SDK components (compileSdk 36 / NDK 27.2 / CMake 3.22.1)
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          # ubuntu-latest ships a full Android SDK; android-actions/setup-android@v3
+          # currently fails on the removed legacy 'tools' package, so use the
+          # preinstalled sdkmanager directly.
+          export PATH="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin | head -1):$ANDROID_HOME/platform-tools:$PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager" --licenses > /dev/null || true
+          SDKM="$ANDROID_HOME/cmdline-tools/$(ls "$ANDROID_HOME/cmdline-tools" | head -1)/bin/sdkmanager"
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+          "$SDKM" --list_installed
+
+      - name: Patch second-app identity + unlimited accounts
+        run: |
+          # 1) Distinct applicationId (official standalone id; firebase-compatible)
+          sed -i 's/^APP_PACKAGE=.*/APP_PACKAGE=org.telegram.messenger.web/' gradle.properties
+          # 2) Distinct version name
+          sed -i 's/^APP_VERSION_NAME=.*/APP_VERSION_NAME=13.2.2-Unlimited2/' gradle.properties
+          # 3) Distinct launcher label
+          sed -i 's|<string name="AppName">Telegram</string>|<string name="AppName">Telegram Unlimited 2</string>|' TMessagesProj/src/main/res/values/strings.xml
+          # 4) Unlimited accounts
+          F=TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
+          sed -i 's/public final static int MAX_ACCOUNT_COUNT = 4;/public final static int MAX_ACCOUNT_COUNT = 999;/' "$F"
+          echo "--- verify patches ---"
+          grep -n "APP_PACKAGE\|APP_VERSION_NAME" gradle.properties
+          grep -n 'name="AppName"' TMessagesProj/src/main/res/values/strings.xml | head -1
+          grep -n "MAX_ACCOUNT_COUNT = " "$F" | head -1
+
+      - name: Build afatRelease APK (all ABIs, signed)
+        run: |
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --stacktrace
+
+      - name: Collect APK
+        run: |
+          ls -la TMessagesProj_App/build/outputs/apk/afat/release/
+          cp TMessagesProj_App/build/outputs/apk/afat/release/app.apk Telegram2-Android-Unlimited.apk
+          sha256sum Telegram2-Android-Unlimited.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-second
+          path: Telegram2-Android-Unlimited.apk
+          retention-days: 30
