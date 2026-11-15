@@ -43,10 +43,13 @@ jobs:
           sed -i "s/2000000000000/$(date +%s%N | cut -c1-13)/g" gradle.properties
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           echo "ndk.dir=$ANDROID_HOME/ndk/27.2.12479018" >> local.properties
-          # Nagram signing reads these from local.properties (public upstream keystore creds)
+          # Nagram signing reads these from local.properties; generate OUR OWN keystore
+          # (the committed TMessagesProj/release.keystore is not the public upstream one)
           echo "KEYSTORE_PASS=android" >> local.properties
           echo "ALIAS_NAME=androidkey" >> local.properties
           echo "ALIAS_PASS=android" >> local.properties
+          rm -f TMessagesProj/release.keystore
+          keytool -genkeypair -v -keystore TMessagesProj/release.keystore -storetype PKCS12 -storepass android -alias androidkey -keypass android -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Telegram Unlimited Custom, OU=Custom, O=Custom, C=IR"
           grep -E "APP_VERSION|APP_PACKAGE" gradle.properties
 
       - name: Build release APKs (all ABIs, signed)
