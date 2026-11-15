@@ -33,6 +33,14 @@ on:
         description: 'CI artifact name'
         required: false
         default: 'android-apk'
+      api_id:
+        description: 'api_id compiled into the app (source default 4 is banned: API_ID_PUBLISHED_FLOOD blocks login). Fallback pair: 611335 / d524b414d21f4d37f08684c1df41ac9c'
+        required: false
+        default: '21724'
+      api_hash:
+        description: 'api_hash compiled into the app'
+        required: false
+        default: '3e0cb5efcd52300aec5994fdfc5bdc16'
 
 jobs:
   build-apk:
@@ -43,6 +51,8 @@ jobs:
       LABEL: ${{ inputs.app_label || 'Telegram' }}
       VSUFFIX: ${{ inputs.version_suffix || '-Unlimited' }}
       APKNAME: ${{ inputs.apk_name || 'Telegram-Android-Unlimited.apk' }}
+      APIID: ${{ inputs.api_id || '21724' }}
+      APIHASH: ${{ inputs.api_hash || '3e0cb5efcd52300aec5994fdfc5bdc16' }}
     steps:
       - name: Checkout official Telegram source
         uses: actions/checkout@v4
@@ -79,6 +89,21 @@ jobs:
           # from our own repo's raw content first.
           curl -sL -o unlimited_accounts.py "https://raw.githubusercontent.com/${{ github.repository }}/main/.github/patches/unlimited_accounts.py"
           python3 unlimited_accounts.py .
+          # ---- LOGIN FIX ----
+          # api_id 4 shipped in the public source is banned by Telegram servers:
+          # auth.sendCode returns API_ID_PUBLISHED_FLOOD, so the login screen
+          # never advances past the phone input (server-verified 2026-11-15:
+          # id 4 rejected while 21724/611335/2496 accepted from the same IP).
+          # Compile in a server-accepted public pair instead (Telegram X FOSS
+          # id used by Nagram / Telegram-FOSS forks; Android-class client).
+          BB=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          sed -i "s/public static int APP_ID = [0-9]*;/public static int APP_ID = $APIID;/" "$BB"
+          sed -i "s/public static String APP_HASH = \"[^\"]*\";/public static String APP_HASH = \"$APIHASH\";/" "$BB"
+          # upstream comment: passkeys only work on official app ids
+          sed -i "s/public static boolean SUPPORTS_PASSKEYS = true;/public static boolean SUPPORTS_PASSKEYS = false;/" "$BB"
+          grep -q "APP_ID = $APIID;" "$BB" || { echo "api_id patch failed"; exit 1; }
+          grep -q "$APIHASH" "$BB" || { echo "api_hash patch failed"; exit 1; }
+          grep -nE "APP_ID = |APP_HASH = |SUPPORTS_PASSKEYS" "$BB" | head -4
           # Build marker
           sed -i "s/^APP_VERSION_NAME=.*/APP_VERSION_NAME=13.2.2$VSUFFIX/" gradle.properties
           grep -n "APP_VERSION_NAME" gradle.properties
