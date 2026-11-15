@@ -43,6 +43,10 @@ jobs:
           sed -i "s/2000000000000/$(date +%s%N | cut -c1-13)/g" gradle.properties
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           echo "ndk.dir=$ANDROID_HOME/ndk/27.2.12479018" >> local.properties
+          # Nagram signing reads these from local.properties (public upstream keystore creds)
+          echo "KEYSTORE_PASS=android" >> local.properties
+          echo "ALIAS_NAME=androidkey" >> local.properties
+          echo "ALIAS_PASS=android" >> local.properties
           grep -E "APP_VERSION|APP_PACKAGE" gradle.properties
 
       - name: Build release APKs (all ABIs, signed)
