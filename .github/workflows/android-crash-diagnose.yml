@@ -7,6 +7,19 @@ name: android-crash-diagnose
 
 on:
   workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: 'artifact containing the APK'
+        required: false
+        default: 'android-apk-second'
+      run_id:
+        description: 'CI run id that produced the artifact'
+        required: false
+        default: '43718589696'
+      package:
+        description: 'APK applicationId'
+        required: false
+        default: '${{ inputs.package || 'org.telegram.messenger.web' }}'
 
 jobs:
   diagnose:
@@ -18,8 +31,8 @@ jobs:
       - name: Download built APK artifact
         uses: actions/download-artifact@v4
         with:
-          name: android-apk-second
-          run-id: 43718589696
+          name: ${{ inputs.artifact_name || 'android-apk-second' }}
+          run-id: ${{ inputs.run_id || '43718589696' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable KVM
@@ -58,12 +71,12 @@ jobs:
           ls -la
           "$A" install -r Telegram2-Android-Unlimited.apk || true
           "$A" logcat -c || true
-          "$A" shell monkey -p org.telegram.messenger.web -c android.intent.category.LAUNCHER 1 || true
+          "$A" shell monkey -p ${{ inputs.package || 'org.telegram.messenger.web' }} -c android.intent.category.LAUNCHER 1 || true
           sleep 30
           "$A" logcat -d -b crash > crash.log || true
           "$A" logcat -d > full.log || true
           echo "=== PROCESS STATE ==="
-          "$A" shell pidof org.telegram.messenger.web || echo "PROCESS DEAD"
+          "$A" shell pidof ${{ inputs.package || 'org.telegram.messenger.web' }} || echo "PROCESS DEAD"
           echo "=== CRASH BUFFER ==="
           head -c 8000 crash.log || true
           echo
