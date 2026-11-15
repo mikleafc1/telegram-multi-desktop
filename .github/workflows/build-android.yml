@@ -1,0 +1,66 @@
+# ============================================================
+# Telegram Android (Unlimited Accounts) — official source build
+# Source: DrKLO/Telegram master (official Telegram for Android)
+# Patch : UserConfig.MAX_ACCOUNT_COUNT 4 -> 999 (unlimited accounts)
+# Output: Telegram-Android-Unlimited.apk (afatRelease, all ABIs,
+#         signed with the repo's public release keystore)
+# ============================================================
+
+name: build-android-apk
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout official Telegram source
+        uses: actions/checkout@v4
+        with:
+          repository: DrKLO/Telegram
+          ref: master
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install exact SDK components (compileSdk 36 / NDK 27.2 / CMake 3.22.1)
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > /dev/null
+          sdkmanager --list_installed
+
+      - name: Patch unlimited accounts (MAX_ACCOUNT_COUNT 4 -> 999)
+        run: |
+          F=TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java
+          sed -i 's/public final static int MAX_ACCOUNT_COUNT = 4;/public final static int MAX_ACCOUNT_COUNT = 999;/' "$F"
+          grep -n "MAX_ACCOUNT_COUNT = " "$F" | head -1
+          # Mark the build so the user can tell it apart from official
+          sed -i 's/^APP_VERSION_NAME=.*/APP_VERSION_NAME=13.2.2-Unlimited/' gradle.properties
+          grep -n "APP_VERSION_NAME" gradle.properties
+
+      - name: Build afatRelease APK (all ABIs, signed)
+        run: |
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --stacktrace
+
+      - name: Collect APK
+        run: |
+          ls -la TMessagesProj_App/build/outputs/apk/afat/release/
+          cp TMessagesProj_App/build/outputs/apk/afat/release/app.apk Telegram-Android-Unlimited.apk
+          sha256sum Telegram-Android-Unlimited.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: Telegram-Android-Unlimited.apk
+          retention-days: 30
