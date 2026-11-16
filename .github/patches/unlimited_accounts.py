@@ -267,4 +267,19 @@ for (f, header, body) in GENERIC:
     g = f'{indent}if (!UserConfig.getInstance({var}).isClientActivated()) continue;'
     guard_loop(f, header, body, g)
 
+print('== 9) remove premium/free account-count gates (Nagram-style) ==')
+# Master gates "Add account" behind Telegram Premium:
+#   MainTabsActivity / LogoutActivity / UserInfoActivity all do
+#     freeAccounts -= (MAX_ACCOUNT_COUNT - MAX_ACCOUNT_DEFAULT_COUNT)   # 999-3
+#   when no account has premium, so without premium the user hits the
+#   LimitReachedBottomSheet(TYPE_ACCOUNTS) after MAX_ACCOUNT_DEFAULT_COUNT=3
+#   accounts. Nagram raises both constants (8/10/128); we go to 999 and
+#   neutralize getMaxAccountCount() too (UserInfoActivity upsell text).
+sub('TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java',
+    'public final static int MAX_ACCOUNT_DEFAULT_COUNT = 3;',
+    'public final static int MAX_ACCOUNT_DEFAULT_COUNT = 999;')
+sub('TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java',
+    'return hasPremiumOnAccounts() ? 5 : 3;',
+    'return MAX_ACCOUNT_COUNT;')
+
 print('ALL PATCHES APPLIED OK')
